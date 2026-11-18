@@ -1,0 +1,17 @@
+{
+  "protocol": {
+    "name": "当班线速口径",
+    "covariates": ["line_speed"],
+    "deviation_unit": "um"
+  },
+  "measurements": [
+    {"specimen_id": "A", "conditions": [0], "deviation_um": -1},
+    {"specimen_id": "B", "conditions": [0], "deviation_um": 1}
+  ],
+  "corrections": [
+    {"specimen_id": "A", "conditions": [0], "deviation_um": -2}
+  ],
+  "target_conditions": [0],
+  "threshold": 2,
+  "handoff_threshold": 1
+}
