@@ -1,14 +1,17 @@
 import json
 import sqlite3
 from contextlib import closing, contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from calibration.publish import freeze_calibration
+from calibration.publish import freeze_calibration, freeze_scenarios
 from calibration.store import CalibrationStore
 from cohort.intake import record_cohort
 from cohort.retirement import retire_cohort
 from handoff.database import open_database
+from handoff.lookup import read_robust
 from protocol.catalog import register_protocol
-from review.issue import issue_report
+from review.issue import issue_report, issue_robust
 
 
 TARGET = (0,)
@@ -71,6 +74,35 @@ def main():
         if evidence[0] != evidence[1] or results != [[[[0, 1], [0, 1]]]] * 2:
             raise AssertionError("unexpected V1 response for the two full cohorts")
         print(json.dumps({"v1_candidate_regions": results}))
+        check_robust_examples(db)
+
+
+def check_robust_examples(db):
+    """Verify the documented robust results, including a reopen on a fresh connection."""
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "coating.sqlite3"
+        with closing(open_database(path)) as fresh:
+            _, source_id = record_line(fresh, TOUCH_SPEEDS, TOUCH_DEVIATIONS)
+            evidence_id = freeze_scenarios(fresh, source_id, TARGET, TOUCH_GROUPS)
+            retire_cohort(fresh, source_id)
+            with forbid_source_measurements(fresh):
+                wide = issue_robust(fresh, evidence_id, 2, 1)
+                point = issue_robust(fresh, evidence_id, 2, 2)
+        expected_wide = [[[-1, 1], [5, 1]]]
+        expected_point = [[[2, 1], [2, 1]]]
+        if wide.candidates.to_payload() != expected_wide:
+            raise AssertionError("unexpected robust union for the touch example")
+        if point.candidates.to_payload() != expected_point:
+            raise AssertionError("unexpected robust intersection for the touch example")
+        with closing(open_database(path)) as reopened:
+            fixed = read_robust(reopened, point.report_id)
+        if fixed != point or fixed.groups != TOUCH_GROUPS or fixed.k != 2 or fixed.q != 2:
+            raise AssertionError("reopened robust report differs from the issued one")
+        print(json.dumps({
+            "robust_union": wide.candidates.to_payload(),
+            "robust_intersection": point.candidates.to_payload(),
+            "robust_reopened": fixed.candidates.to_payload(),
+        }))
 
 
 if __name__ == "__main__":

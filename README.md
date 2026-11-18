@@ -28,7 +28,13 @@ python3 -B -m unittest discover -s tests -t . -v
 - `cohort.retirement.retire_cohort(db, source_revision_id)` 停用指定来源，重复停用保留已停用状态。停用后拒绝从该修订创建更正或新校准。已冻结校准仍可用于续签。
 - `handoff.lookup.read_report(db, report_id)` 按号读取原固定正文。`handoff.export.export_report(db, report_id)` 返回确定性 JSON。`candidate_regions` 的每一项为 `[下界, 上界]`，有理端点用 `[分子, 正分母]`，无界端用 `null`。同端点表示孤立点，`[]` 表示空集，`[[null,null]]` 表示全实轴。
 
-业务号使用库返回的正整数。未知业务号报 `KeyError`。不合法的工况、门槛或停用源上的新冻结报 `ValueError`。签发失败会保留原报告和原目录。多个独立使用者各自打开连接，冻结、停用等写入按数据库事务提交顺序生效。
+## 按批剔除后的复测签发
+
+- `calibration.publish.freeze_scenarios(db, revision_id, target_conditions, groups)` 从指定可用修订冻结具名剔除情景并返回冻结证据号。`groups` 是非空列表或元组，每项为 `(name, specimen_ids)`：组名与组内片号都是非全空白字符串，组名互不重复，同组片号互不重复且须属于该修订，每组至少剔除一件、保留一件原片；不同名称即使剔除相同片号也各自是一个情景。冻结件自带该修订的目标工况、完整分组和当时的原片测量，供日后续签独立重拟合。
+- `review.issue.issue_robust(db, evidence_id, k, q)` 只消费指定冻结件签发报告，不读取源测量。`k`、`q` 均为非布尔正整数，`k` 不超过任一情景含待测片的总片数，`q` 不超过情景数。每个候选偏差对每个情景用该组剩余原片与同一待测片按 V1 含截距模型精确重拟合（秩亏仍取唯一拟合值）；待测片自计一次，原片绝对残差不小于待测片时计入，达到 `k` 的情景为该候选投一票。报告的 `candidates` 是同一候选至少取得 `q` 票的完整闭集合。
+- `handoff.lookup.read_robust(db, report_id)` 按报告号返回签发时的固定报告，不重算。报告对象提供 `report_id`、`evidence_id`、`groups`、`k`、`q`、`candidates`；`groups` 为 `tuple[tuple[str, tuple[str, ...]], ...]`，`candidates` 沿用 `review.region_set.CandidateSet` 及其 `to_payload()` 编码。
+
+业务号使用库返回的正整数。未知业务号报 `KeyError`。不合法的工况、门槛或停用源上的新冻结报 `ValueError`。签发失败会保留原报告和原目录。冻结件与签发报告各自在单个事务中提交，失败无部分成果并可重试。工具演练见 `robust_examples.py` 与 `demo.py`；`robust_examples.forbid_source_measurements` 在独立连接上屏蔽源测量读取，`reject_commit` 用于核验提交失败后的回滚与重试。多个独立使用者各自打开连接，冻结、停用等写入按数据库事务提交顺序生效。
 
 ## 一次交班
 
@@ -40,3 +46,5 @@ python3 -B -m unittest discover -s tests -t . -v
 6. 台账签发闭区间 [−3,3]。复测组可选择边界值，校准号和门槛随报告一起固定。
 7. 试验员停用原版。原版不再用于新冻结，既有校准和报告仍可领取。
 8. 接班员重开数据库，按原号取得原区间和确定性导出，再以同一校准和 k=1 签发全实轴报告。两份成果各有自己的报告号。
+
+按批剔除的流程在其上多一层：校准员在停用前用 `freeze_scenarios` 冻结若干具名剔除情景；复测组凭冻结证据号在停用后签发，签发不触及源测量；接班员重开后按报告号领取当时的分组、门槛与结果。
